@@ -1,0 +1,42 @@
+name: Reasoning test
+
+# Runs on every push and PR. The graph-compile check needs no secrets; the
+# live reasoning call runs only when an NVIDIA_API_KEY secret is configured
+# (Settings → Secrets and variables → Actions), so forks/PRs don't hard-fail.
+on:
+  push:
+  pull_request:
+
+jobs:
+  reasoning:
+    runs-on: ubuntu-latest
+    env:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify the LangGraph compiles (no network)
+        working-directory: backend
+        run: |
+          python -c "import agent; assert agent.voice_agent is not None; print('graph OK:', list(agent.voice_agent.get_graph().nodes))"
+
+      - name: Seed ChromaDB and run the reasoning test
+        if: ${{ env.NVIDIA_API_KEY != '' }}
+        working-directory: backend
+        run: |
+          python rag.py
+          python agent.py "What projects have you built?"
+
+      - name: Reasoning test skipped (no secret)
+        if: ${{ env.NVIDIA_API_KEY == '' }}
+        run: |
+          echo "NVIDIA_API_KEY secret is not set, so the live reasoning call was skipped."
+          echo "Add it under Settings > Secrets and variables > Actions to enable it."
