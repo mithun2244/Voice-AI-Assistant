@@ -22,16 +22,18 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Annotated, List, TypedDict
 
 from dotenv import load_dotenv
-from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from rag import get_retriever
+from tools import transfer_to_author
 
 # Load the project-root .env explicitly (one level up from backend/) so env
 # vars resolve regardless of the launch directory.
@@ -43,11 +45,22 @@ logger = logging.getLogger("voice-agent")
 # Requires NVIDIA_API_KEY in the environment (see .env.example).
 llm = ChatNVIDIA(model="meta/llama-3.3-70b-instruct", temperature=0.3)
 
+# Tools the voice agent can call. The LLM used in the voice graph is bound to
+# these; the text-only graph below uses the plain `llm` (no tools).
+TOOLS = [transfer_to_author]
+llm_with_tools = llm.bind_tools(TOOLS)
+
 SYSTEM_PROMPT = (
     "You are the personal voice agent for a software engineer, speaking to "
     "hiring managers. Answer in a warm, concise, spoken style (1-3 sentences). "
-    "Ground every claim in the retrieved resume and GitHub context provided. "
-    "If the context does not cover the question, say so honestly."
+    "Ground every claim in the retrieved resume and GitHub context provided.\n"
+    "If the context does not cover the question, do NOT make something up. "
+    "Say you don't have that detail, then OFFER to connect them directly to the "
+    "author (e.g. 'Would you like me to connect you with them directly?'). "
+    "Only if the caller says yes, call the `transfer_to_author` tool, passing a "
+    "short summary of their question as the reason. After the tool runs, tell "
+    "the caller the author has been notified. Never call the tool without the "
+    "caller's explicit yes."
 )
 
 
@@ -189,29 +202,123 @@ def voice_retrieve_node(state: VoiceState) -> dict:
 def voice_reason_node(state: VoiceState) -> dict:
     """Reason over history + retrieved context, appending an AIMessage.
 
-    The LLM call streams token-by-token when the LLMAdapter runs the graph in
-    `stream_mode="messages"`, so the caller can start TTS before the full
-    answer is ready.
+    On a normal turn the tool-bound LLM may return a `transfer_to_author` tool
+    call (routed to the `tools` node below). Once a tool has just run, we reason
+    with the *tool-free* LLM so the model speaks the confirmation instead of
+    calling the tool again — otherwise it loops (reason → tools → reason → …)
+    and fires the webhook repeatedly. The LLM call streams token-by-token when
+    the LLMAdapter runs the graph in `stream_mode="messages"`.
     """
+    messages = state["messages"]
+    just_ran_tool = bool(messages) and getattr(messages[-1], "type", None) == "tool"
+    model = llm if just_ran_tool else llm_with_tools
+
     context_block = "\n\n".join(state.get("context", [])) or "(no context found)"
     prompt = [
         SystemMessage(content=SYSTEM_PROMPT),
         SystemMessage(content=f"Retrieved context for the latest question:\n{context_block}"),
-        *state["messages"],
+        *messages,
     ]
-    answer = llm.invoke(prompt)
-    logger.info("graph → reply: %r", getattr(answer, "content", "")[:120])
+    answer = model.invoke(prompt)
+    if getattr(answer, "tool_calls", None):
+        logger.info("graph → tool call(s): %s", [tc["name"] for tc in answer.tool_calls])
+    else:
+        logger.info("graph → reply: %r", getattr(answer, "content", "")[:120])
     return {"messages": [answer]}
 
 
+def _route_after_reason(state: VoiceState) -> str:
+    """Send tool calls to the tools node; otherwise end the turn."""
+    last = state["messages"][-1]
+    return "tools" if getattr(last, "tool_calls", None) else END
+
+
+# ── Deterministic guards for the hand-off ────────────────────────────
+# The model decides *whether* to call transfer_to_author, but these guards
+# decide whether it is actually *allowed* to fire — so a premature or repeated
+# tool call can never post to Discord.
+_AFFIRMATIVE = re.compile(
+    r"\b(yes|yeah|yep|yup|sure|please|ok|okay|connect me|go ahead|do it|"
+    r"sounds good|that works|absolutely|definitely)\b",
+    re.IGNORECASE,
+)
+
+
+def _already_transferred(messages: List[AnyMessage]) -> bool:
+    """True if transfer_to_author already ran (successfully) this conversation."""
+    return any(
+        getattr(m, "type", None) == "tool"
+        and getattr(m, "name", None) == "transfer_to_author"
+        and getattr(m, "status", "success") != "error"
+        and "NOT SENT" not in (m.content if isinstance(m.content, str) else "")
+        for m in messages
+    )
+
+
+def _caller_consented(messages: List[AnyMessage]) -> bool:
+    """True if the caller's most recent utterance is an affirmative."""
+    for m in reversed(messages):
+        if getattr(m, "type", None) == "human":
+            text = m.content if isinstance(m.content, str) else str(m.content)
+            return bool(_AFFIRMATIVE.search(text))
+    return False
+
+
+def guarded_tools_node(state: VoiceState) -> dict:
+    """Execute transfer_to_author ONLY with fresh consent and only once.
+
+    Replaces the stock ToolNode so the two guarantees are enforced in code,
+    not left to the LLM: (1) idempotency — at most one successful notification
+    per conversation; (2) consent — the caller must have just said yes.
+    Blocked calls return a ToolMessage that steers the model to do the right
+    thing next (offer first, or reassure that the author was already pinged).
+    """
+    last = state["messages"][-1]
+    out: List[ToolMessage] = []
+    for call in getattr(last, "tool_calls", []) or []:
+        if call["name"] != "transfer_to_author":
+            continue
+        call_id = call["id"]
+        if _already_transferred(state["messages"]):
+            logger.info("hand-off guard: BLOCKED (already notified this session)")
+            out.append(ToolMessage(
+                content="NOT SENT — the author was already notified in this "
+                        "conversation. Reassure the caller they'll be in touch soon.",
+                name="transfer_to_author", tool_call_id=call_id, status="error",
+            ))
+        elif not _caller_consented(state["messages"]):
+            logger.info("hand-off guard: BLOCKED (no explicit consent yet)")
+            out.append(ToolMessage(
+                content="NOT SENT — the caller has not agreed to be connected "
+                        "yet. Say you don't have that detail, offer to connect "
+                        "them to the author, and only transfer after they say yes.",
+                name="transfer_to_author", tool_call_id=call_id, status="error",
+            ))
+        else:
+            logger.info("hand-off guard: ALLOWED — notifying author")
+            result = transfer_to_author.invoke(call["args"])
+            out.append(ToolMessage(
+                content=result, name="transfer_to_author", tool_call_id=call_id,
+            ))
+    return {"messages": out}
+
+
 def build_voice_graph():
-    """Compile the messages-based graph the LLMAdapter consumes."""
+    """Compile the messages-based graph the LLMAdapter consumes.
+
+        retrieve ─▶ reason ─▶ END
+                       │  ▲
+                       ▼  │ (after tool runs, reason speaks the confirmation)
+                     tools
+    """
     graph = StateGraph(VoiceState)
     graph.add_node("retrieve", voice_retrieve_node)
     graph.add_node("reason", voice_reason_node)
+    graph.add_node("tools", guarded_tools_node)
     graph.add_edge(START, "retrieve")
     graph.add_edge("retrieve", "reason")
-    graph.add_edge("reason", END)
+    graph.add_conditional_edges("reason", _route_after_reason, {"tools": "tools", END: END})
+    graph.add_edge("tools", "reason")
     return graph.compile()
 
 
