@@ -1,5 +1,7 @@
 # 🎙️ Voice Agent — NVIDIA NIM · LangGraph · WebRTC
 
+[![Reasoning test](https://github.com/mithun2244/Voice-AI-Assistant/actions/workflows/reasoning-test.yml/badge.svg)](https://github.com/mithun2244/Voice-AI-Assistant/actions/workflows/reasoning-test.yml)
+
 A real-time, browser-based voice agent that lets hiring managers **talk to your AI**
 about your resume and GitHub projects. Speech in, speech out — no phone network.
 
