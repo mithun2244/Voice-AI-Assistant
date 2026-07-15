@@ -1,0 +1,174 @@
+# 🎙️ Voice Agent — NVIDIA NIM · LangGraph · WebRTC
+
+A real-time, browser-based voice agent that lets hiring managers **talk to your AI**
+about your resume and GitHub projects. Speech in, speech out — no phone network.
+
+```
+Browser (mic) ──WebRTC──▶ LiveKit room ──▶ Agent worker (agent_worker.py)
+   ▲                                            │
+   │                                            ▼
+   │                        nvidia.STT · Parakeet 1.1b   (ASR + EOU)
+   │                                            │
+   │                        LangGraph (voice_agent):
+   │                          • retrieve · ChromaDB
+   │                          • reason   · Llama 3.3 70B   (ChatNVIDIA)
+   │                                            │
+   │                                            ▼
+   └──────── audio out ──────  nvidia.TTS · Magpie voice
+```
+
+## Layout
+
+```
+Voice_agent/
+├── requirements.txt          # Python deps
+├── backend/
+│   ├── agent.py              # LangGraph graph: transcribe → retrieve → reason → synthesize
+│   ├── agent_worker.py       # LiveKit worker: Parakeet STT → graph → TTS (real audio loop)
+│   ├── rag.py                # Local ChromaDB store for resume + project data
+│   ├── server.py            # FastAPI: LiveKit token minting + text fallback
+│   ├── scripts/
+│   │   └── smoke_call.py    # headless end-to-end voice test (no browser)
+│   └── knowledge/           # resume.md / projects.md templates — edit + re-seed
+└── frontend/                # Vite + React + LiveKit client
+    ├── src/App.jsx          # "Talk to my AI" mic UI
+    └── ...
+```
+
+## Backend setup
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate            # Windows (use `source .venv/bin/activate` on macOS/Linux)
+pip install -r requirements.txt
+```
+
+Create a `.env` at the **repo root** (all backend scripts load it regardless of
+launch directory):
+
+```bash
+NVIDIA_API_KEY=nvapi-...            # from https://build.nvidia.com
+LIVEKIT_URL=ws://localhost:7880     # defaults match `livekit-server --dev`
+LIVEKIT_API_KEY=devkey
+LIVEKIT_API_SECRET=secret
+```
+
+Then:
+
+```bash
+# 1. Seed the knowledge base (after adding files to backend/knowledge/)
+python backend/rag.py
+
+# 2. Smoke-test the reasoning graph (text only)
+python backend/agent.py "What are your strongest projects?"
+
+# 3. Run the API server
+cd backend
+uvicorn server:app --reload --port 8000
+```
+
+For the live audio path, also run a LiveKit server locally:
+
+```bash
+livekit-server --dev        # serves ws://localhost:7880 with devkey/secret
+```
+
+## Frontend setup
+
+```bash
+cd frontend
+npm install
+copy .env.example .env      # optional; defaults to http://localhost:8000
+npm run dev                 # http://localhost:5173
+```
+
+Open the app, click **Talk to my AI**, allow the microphone, and start talking.
+
+## What's a placeholder vs. wired
+
+| Piece | Status |
+|-------|--------|
+| LangGraph orchestration | ✅ wired |
+| ChatNVIDIA (Llama 3.3 70B) reasoning | ✅ wired |
+| ChromaDB retrieval | ✅ wired |
+| LiveKit token minting + React WebRTC client | ✅ wired |
+| **Parakeet Realtime ASR + EOU** | ✅ wired in `agent_worker.py` (`nvidia.STT`) |
+| **Magpie TTS synthesis** | ✅ wired in `agent_worker.py` (`nvidia.TTS`) |
+
+The audio loop lives in **`backend/agent_worker.py`** — a LiveKit agent worker
+that joins the room, subscribes to the caller's mic, and runs the full
+`AgentSession` pipeline:
+
+- **STT** — `nvidia.STT()` (Parakeet streaming ASR + endpointing)
+- **LLM** — `LLMAdapter(graph=voice_agent)`, our ChromaDB + Llama 3.3 70B graph
+- **TTS** — `nvidia.TTS()` (Magpie voice)
+- **VAD** — `silero.VAD.load()` for turn detection
+
+The worker extras are in `requirements.txt`, so `pip install -r requirements.txt`
+already covers them. Run the worker alongside the API server (needs
+`NVIDIA_API_KEY` and a reachable LiveKit server):
+
+```bash
+python backend/agent_worker.py dev      # dev mode, hot-reload
+```
+
+On this path the session plugins own ASR/TTS, so the graph's own
+`transcribe_node` / `synthesize_node` are no-ops and only `retrieve` + `reason`
+do work.
+
+## Knowledge base
+
+`backend/knowledge/` ships with `resume.md` and `projects.md` **templates** —
+fill in the bracketed placeholders with your real details, then embed them:
+
+```bash
+python backend/rag.py
+```
+
+## Testing
+
+**1. Reasoning only (text, no audio).** Fastest check that retrieval + the LLM
+work. Needs `NVIDIA_API_KEY` and a seeded ChromaDB:
+
+```bash
+python backend/agent.py "What are your strongest projects?"
+```
+
+**2. Full voice loop, headless (no browser).** `backend/scripts/smoke_call.py`
+acts as a synthetic caller: it joins the LiveKit room like the frontend would,
+speaks a question (synthesized with NVIDIA TTS), and listens for the agent's
+spoken reply — exercising the entire path:
+
+```
+caller mic → Parakeet STT → LangGraph (ChromaDB + Llama) → Magpie TTS → caller
+```
+
+Prerequisites — all three must be running first:
+
+```bash
+livekit-server --dev                    # terminal 1
+python backend/agent_worker.py dev      # terminal 2
+```
+
+Then run the smoke test (terminal 3):
+
+```bash
+python backend/scripts/smoke_call.py
+python backend/scripts/smoke_call.py "What is your strongest project?"   # custom question
+```
+
+It prints each stage and ends with `RESULT: [PASS]` (exit code `0`) once the
+agent joins and speaks a reply, or `[FAIL]` (non-zero) otherwise — so it can
+gate CI. Watch the **worker console** at the same time for the per-stage logs:
+
+```
+track subscribed … browser mic audio is routing
+USER transcribed (final=True): 'What is your strongest project?'
+retrieved 4 context chunk(s) from ChromaDB
+agent state: thinking -> speaking
+```
+
+If the agent goes silent, those logs pinpoint the stage that stopped. A
+`DEGRADED` / `cannot be invoked` line means the NVIDIA hosted function is
+temporarily down — retry shortly, or point `NVIDIA_TTS_FUNCTION_ID` /
+`NVIDIA_STT_FUNCTION_ID` in `.env` at another ACTIVE function.

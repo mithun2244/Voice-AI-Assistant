@@ -1,0 +1,27 @@
+# ── Core reasoning / LLM ────────────────────────────────────────────
+langchain-nvidia-ai-endpoints>=0.3.0   # ChatNVIDIA + NVIDIA NIM embeddings/ASR/TTS
+langchain>=0.3.0
+langgraph>=0.2.0                        # orchestration graph
+
+# ── Retrieval (resume + GitHub project data) ────────────────────────
+chromadb>=0.5.0
+langchain-chroma>=0.1.4                 # LangChain <-> Chroma retriever wrapper
+langchain-text-splitters>=0.3.0         # chunk resume/project docs for embedding
+
+# ── Web / realtime transport ────────────────────────────────────────
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+livekit-api>=0.8.0                      # mint LiveKit access tokens (WebRTC rooms)
+                                        # NOTE: "livekit-server-sdk" is the Node package;
+                                        # livekit-api is its Python equivalent (from livekit import api)
+
+# ── Utilities ───────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+
+# ── LiveKit agent worker (real-time audio path) ─────────────────────
+# Powers the live speech loop in agent_worker.py.
+livekit-agents>=1.6                     # AgentSession voice pipeline + worker CLI
+livekit-plugins-nvidia>=1.6             # Parakeet Realtime STT + Magpie TTS (nvidia-riva-client)
+livekit-plugins-langchain>=1.6          # LLMAdapter — bridges the compiled LangGraph
+livekit-plugins-silero>=1.6             # Silero VAD / turn detection
