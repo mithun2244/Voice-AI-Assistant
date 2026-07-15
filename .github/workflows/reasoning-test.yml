@@ -30,11 +30,8 @@ jobs:
 
       - name: Seed ChromaDB and run the reasoning test
         if: ${{ env.NVIDIA_API_KEY != '' }}
-        # Best-effort: this hits the live NVIDIA LLM, which is occasionally slow
-        # from CI runners (read timeouts). We retry a few times; if NVIDIA is
-        # still unreachable we surface a warning but don't fail the build — the
-        # deterministic graph-compile step above is the real gate for our code.
-        continue-on-error: true
+        # Hard gate: this hits the live NVIDIA LLM. We retry a few times to ride
+        # out brief blips, but if NVIDIA is still unreachable the build FAILS.
         working-directory: backend
         run: |
           python rag.py
@@ -48,7 +45,7 @@ jobs:
             echo "attempt $attempt failed; retrying in 15s..."
             sleep 15
           done
-          echo "::warning::NVIDIA reasoning endpoint did not respond after 3 attempts (likely a transient outage)."
+          echo "::error::NVIDIA reasoning endpoint did not respond after 3 attempts."
           exit 1
 
       - name: Reasoning test skipped (no secret)
