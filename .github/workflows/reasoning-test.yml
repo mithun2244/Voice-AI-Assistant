@@ -1,8 +1,8 @@
 name: Reasoning test
 
-# Runs on every push and PR. The graph-compile check needs no secrets; the
-# live reasoning call runs only when an NVIDIA_API_KEY secret is configured
-# (Settings → Secrets and variables → Actions), so forks/PRs don't hard-fail.
+# Fully offline and deterministic: the NVIDIA LLM/embeddings and the Discord
+# webhook are mocked in the test suite, so CI never depends on live endpoints
+# (no NVIDIA_API_KEY secret, no network flakiness).
 on:
   push:
   pull_request:
@@ -10,8 +10,6 @@ on:
 jobs:
   reasoning:
     runs-on: ubuntu-latest
-    env:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
     steps:
       - uses: actions/checkout@v5
 
@@ -23,33 +21,6 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Verify the LangGraph compiles (no network)
+      - name: Run offline reasoning + hand-off tests (mocked NVIDIA & Discord)
         working-directory: backend
-        run: |
-          python -c "import agent; assert agent.voice_agent is not None; print('graph OK:', list(agent.voice_agent.get_graph().nodes))"
-
-      - name: Seed ChromaDB and run the reasoning test
-        if: ${{ env.NVIDIA_API_KEY != '' }}
-        # Hard gate: this hits the live NVIDIA LLM. We retry a few times to ride
-        # out brief blips, but if NVIDIA is still unreachable the build FAILS.
-        working-directory: backend
-        run: |
-          python rag.py
-          for attempt in 1 2 3; do
-            echo "::group::Reasoning attempt $attempt"
-            if python agent.py "What projects have you built?"; then
-              echo "::endgroup::"
-              exit 0
-            fi
-            echo "::endgroup::"
-            echo "attempt $attempt failed; retrying in 15s..."
-            sleep 15
-          done
-          echo "::error::NVIDIA reasoning endpoint did not respond after 3 attempts."
-          exit 1
-
-      - name: Reasoning test skipped (no secret)
-        if: ${{ env.NVIDIA_API_KEY == '' }}
-        run: |
-          echo "NVIDIA_API_KEY secret is not set, so the live reasoning call was skipped."
-          echo "Add it under Settings > Secrets and variables > Actions to enable it."
+        run: pytest tests -q

@@ -19,6 +19,7 @@ livekit-api>=0.8.0                      # mint LiveKit access tokens (WebRTC roo
 python-dotenv>=1.0.0
 pydantic>=2.0.0
 requests>=2.28.0                        # Discord webhook (transfer_to_author tool)
+pytest>=8.0.0                           # offline reasoning + hand-off tests (CI)
 
 # ── LiveKit agent worker (real-time audio path) ─────────────────────
 # Powers the live speech loop in agent_worker.py.
