@@ -1,0 +1,52 @@
+name: Live reasoning (nightly)
+
+# Non-gating counterpart to the offline "Reasoning test" workflow. This one
+# exercises the REAL NVIDIA endpoint (seed ChromaDB + reason with Llama 3.3),
+# but only on a schedule and on demand — never on push — so a slow NVIDIA
+# endpoint can't red your PR/commit checks. Needs the NVIDIA_API_KEY secret.
+on:
+  schedule:
+    - cron: "0 6 * * *"   # daily at 06:00 UTC
+  workflow_dispatch:       # "Run workflow" button in the Actions tab
+
+jobs:
+  live-reasoning:
+    runs-on: ubuntu-latest
+    env:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check the NVIDIA_API_KEY secret is configured
+        run: |
+          if [ -z "$NVIDIA_API_KEY" ]; then
+            echo "::error::NVIDIA_API_KEY secret is not set (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+
+      - name: Seed ChromaDB and run the live reasoning test
+        working-directory: backend
+        # Retry to ride out brief NVIDIA blips; a sustained outage fails this
+        # (non-gating) run so you can see NVIDIA availability at a glance.
+        run: |
+          python rag.py
+          for attempt in 1 2 3; do
+            echo "::group::Reasoning attempt $attempt"
+            if python agent.py "What projects have you built?"; then
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "attempt $attempt failed; retrying in 15s..."
+            sleep 15
+          done
+          echo "::error::NVIDIA reasoning endpoint did not respond after 3 attempts."
+          exit 1
