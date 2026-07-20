@@ -1,5 +1,7 @@
 # 🎙️ Voice Agent — NVIDIA NIM · LangGraph · WebRTC
 
+### 🔗 [Live Demo](https://voice-ai-assistant-sqb8.vercel.app) — click **Talk to my AI** and allow your microphone
+
 [![Reasoning test](https://github.com/mithun2244/Voice-AI-Assistant/actions/workflows/reasoning-test.yml/badge.svg)](https://github.com/mithun2244/Voice-AI-Assistant/actions/workflows/reasoning-test.yml)
 
 A real-time, browser-based voice agent that lets hiring managers **talk to your AI**
