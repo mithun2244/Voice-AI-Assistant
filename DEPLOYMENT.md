@@ -162,3 +162,112 @@ Everything each host needs, at a glance:
   build cache & deploy** on `voice-agent-worker` to re-seed.
 - **Worker never joins the room** → confirm the worker's `LIVEKIT_URL` /
   key / secret match the same LiveKit Cloud project the token server uses.
+
+---
+
+## Appendix: hosting the agent worker (always-on)
+
+`render.yaml` deploys only the free **web** service. The agent worker
+(`backend/agent_worker.py`) is a long-running process that connects out to
+LiveKit Cloud and answers calls — it is **not** hosted by that Blueprint.
+
+> **Why this matters:** if you run the worker locally
+> (`python backend/agent_worker.py start`), your live site only responds while
+> your machine is on and that command is running. For a CV link that works
+> anytime, host the worker on an always-on box.
+
+**What the worker needs, wherever it runs:**
+
+- Python 3.12, `pip install -r requirements.txt`
+- ChromaDB seeded once: `python backend/rag.py`
+- Start command: `python backend/agent_worker.py start`
+- These env vars:
+
+  | Variable | Value |
+  |----------|-------|
+  | `NVIDIA_API_KEY` | build.nvidia.com |
+  | `LIVEKIT_URL` | `wss://<your-project>.livekit.cloud` (same project as the API) |
+  | `LIVEKIT_API_KEY` | LiveKit Cloud |
+  | `LIVEKIT_API_SECRET` | LiveKit Cloud |
+  | `DISCORD_WEBHOOK_URL` | your Discord webhook |
+  | `APP_URL` | your Vercel URL (so the hand-off link points to the live app) |
+
+### Option A — Render Background Worker (most consistent with this repo)
+
+Render Workers need a **paid** plan (Starter, ~$7/mo). Add this service back to
+`render.yaml` and re-sync the Blueprint (or create a Background Worker manually
+in the dashboard with the same settings):
+
+```yaml
+  - type: worker
+    name: voice-agent-worker
+    runtime: python
+    plan: starter
+    branch: main
+    buildCommand: pip install -r requirements.txt && cd backend && (python rag.py || echo "WARN seeding skipped")
+    startCommand: cd backend && python agent_worker.py start
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.10"
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: DISCORD_WEBHOOK_URL
+        sync: false
+      - key: APP_URL
+        sync: false
+```
+
+### Option B — Railway / Fly.io / Koyeb
+
+Any host that runs a persistent process works:
+
+- **Railway:** New Project → Deploy from GitHub → set **Root Directory** blank
+  (repo root), **Start Command** `cd backend && python agent_worker.py start`,
+  add the env vars above. (Seed once via a one-off `python backend/rag.py` or
+  prepend it to the start command.)
+- **Fly.io:** `fly launch` (no public ports needed — it's a worker), set secrets
+  with `fly secrets set NVIDIA_API_KEY=… LIVEKIT_URL=… …`, start command as above.
+
+### Option C — a small VPS (systemd)
+
+On any Linux box, run it as a service so it restarts on reboot/crash:
+
+```ini
+# /etc/systemd/system/voice-agent-worker.service
+[Unit]
+Description=Voice Agent Worker
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/Voice-AI-Assistant/backend
+EnvironmentFile=/opt/Voice-AI-Assistant/.env
+ExecStart=/opt/Voice-AI-Assistant/.venv/bin/python agent_worker.py start
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable --now voice-agent-worker
+journalctl -u voice-agent-worker -f   # tail logs
+```
+
+### Option D — LiveKit Cloud Agents (native)
+
+LiveKit Cloud can host agents directly (no separate PaaS). If you prefer to keep
+everything on LiveKit, see their Agents deployment docs
+(<https://docs.livekit.io/agents/ops/deployment/>) — you deploy the same
+`agent_worker.py` via the LiveKit CLI and it runs on their infra.
+
+> Whichever you pick: the worker uses **automatic dispatch** (no `agent_name` in
+> `WorkerOptions`), so it auto-joins any room in the LiveKit project. Just make
+> sure its `LIVEKIT_*` env vars point at the **same** project as the token
+> server, and only run **one** worker (or a couple) — multiple workers will
+> load-balance jobs between them.
