@@ -174,3 +174,35 @@ If the agent goes silent, those logs pinpoint the stage that stopped. A
 `DEGRADED` / `cannot be invoked` line means the NVIDIA hosted function is
 temporarily down — retry shortly, or point `NVIDIA_TTS_FUNCTION_ID` /
 `NVIDIA_STT_FUNCTION_ID` in `.env` at another ACTIVE function.
+
+**3. Offline test suite (no network, no keys).** `backend/tests/` mocks the
+NVIDIA LLM/embeddings and the Discord webhook, so it runs anywhere in ~1s. It
+covers the reasoning graph and the hand-off guards (consent + idempotency):
+
+```bash
+pytest backend/tests -q
+```
+
+This is what CI runs on every push (see below).
+
+## Continuous integration
+
+Two GitHub Actions workflows, deliberately split so a slow NVIDIA endpoint can
+never block your commits:
+
+| Workflow | File | Trigger | Gates pushes? | What it does |
+|----------|------|---------|---------------|--------------|
+| **Reasoning test** | `reasoning-test.yml` | every push / PR | ✅ yes | Runs the offline `pytest` suite — deterministic, no secrets, no network. This is the badge at the top of the README. |
+| **Live reasoning (nightly)** | `live-reasoning.yml` | daily 06:00 UTC + manual | ❌ no | Exercises the **real** NVIDIA path (seed ChromaDB → reason with Llama 3.3) so you get a genuine integration signal. Needs the `NVIDIA_API_KEY` repo secret. |
+
+Because the nightly job hits the live endpoint, it goes red whenever NVIDIA is
+slow or unreachable — that's expected and, being non-gating, it never affects
+the green push badge. Run it on demand any time:
+
+```bash
+gh workflow run live-reasoning.yml
+# or: Actions tab → "Live reasoning (nightly)" → "Run workflow"
+```
+
+To enable the nightly run, add your key under **Settings → Secrets and
+variables → Actions** as `NVIDIA_API_KEY`.
