@@ -40,6 +40,36 @@ server for a LiveKit token; the browser then streams mic audio to a LiveKit
 Cloud room over WebRTC, where the Python agent worker (Parakeet STT → LangGraph
 reasoning → Magpie TTS) joins, answers, and streams speech back.*
 
+## Sample conversation transcript
+
+A hiring manager speaking to the live agent. Every answer is grounded in the
+owner's resume/GitHub data, and the final turn triggers the **human-in-the-loop
+hand-off** — a real Discord ping to the author with a link back to the app.
+
+> 🧑 **Hiring manager:** Hi! What kind of projects have you built?
+>
+> 🤖 **Agent:** Happy to share! A couple I'm proud of: the *Agentic FAQ Support
+> Pipeline* — an automated support system where reasoning agents route and
+> answer user queries with no human in the loop — and *Insight RAG*, a
+> retrieval-augmented system that pulls deep insights from document knowledge
+> bases. Both are up on my GitHub.
+>
+> 🧑 **Hiring manager:** Nice. What's the stack behind Insight RAG?
+>
+> 🤖 **Agent:** Python end to end, built on RAG frameworks with a vector
+> database for retrieval. The fun part was the document-chunking strategy —
+> keeping the retrieved context tight so answers stay accurate.
+>
+> 🧑 **Hiring manager:** Great. And what salary are you looking for?
+>
+> 🤖 **Agent:** I don't have that detail on hand — that's really one for the
+> person themselves. Would you like me to connect you with them directly?
+>
+> 🧑 **Hiring manager:** Yes, please.
+>
+> 🤖 **Agent:** Done — I've pinged them and shared this link, so they can jump
+> in and talk with you directly. 🔔
+
 ## Layout
 
 ```
