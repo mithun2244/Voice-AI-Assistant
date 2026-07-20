@@ -5,19 +5,40 @@
 A real-time, browser-based voice agent that lets hiring managers **talk to your AI**
 about your resume and GitHub projects. Speech in, speech out — no phone network.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    User(["User Browser"])
+
+    subgraph V["Vercel"]
+        FE["React Frontend<br/>Talk to my AI"]
+    end
+
+    subgraph R["Render (free tier)"]
+        API["FastAPI<br/>token server"]
+    end
+
+    subgraph LK["LiveKit Cloud"]
+        Room(("WebRTC room"))
+    end
+
+    subgraph W["Python Agent Worker"]
+        direction TB
+        STT["nvidia.STT · Parakeet"] --> G["LangGraph<br/>ChromaDB + Llama 3.3 70B"] --> TTS["nvidia.TTS · Magpie"]
+    end
+
+    User -->|"1 · load site"| FE
+    FE -->|"2 · POST /token"| API
+    API -->|"3 · LiveKit JWT + URL"| FE
+    User <-->|"4 · mic + reply audio (WebRTC)"| Room
+    W <-->|"5 · dispatched to room, streams audio"| Room
 ```
-Browser (mic) ──WebRTC──▶ LiveKit room ──▶ Agent worker (agent_worker.py)
-   ▲                                            │
-   │                                            ▼
-   │                        nvidia.STT · Parakeet 1.1b   (ASR + EOU)
-   │                                            │
-   │                        LangGraph (voice_agent):
-   │                          • retrieve · ChromaDB
-   │                          • reason   · Llama 3.3 70B   (ChatNVIDIA)
-   │                                            │
-   │                                            ▼
-   └──────── audio out ──────  nvidia.TTS · Magpie voice
-```
+
+*Flow: the browser loads the Vercel frontend, which asks the Render FastAPI
+server for a LiveKit token; the browser then streams mic audio to a LiveKit
+Cloud room over WebRTC, where the Python agent worker (Parakeet STT → LangGraph
+reasoning → Magpie TTS) joins, answers, and streams speech back.*
 
 ## Layout
 
