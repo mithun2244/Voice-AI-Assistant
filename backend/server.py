@@ -11,8 +11,12 @@ microphone audio over WebRTC (no phone network required). A LiveKit
 agent worker (see agent.py placeholders) subscribes to that audio,
 runs Parakeet ASR -> LangGraph -> TTS, and publishes the reply audio back.
 
-Run:
+Run (local dev):
     uvicorn server:app --reload --port 8000     # from the backend/ dir
+
+Run (production, e.g. Render):
+    uvicorn server:app --host 0.0.0.0 --port $PORT
+    # or simply: python server.py   (binds 0.0.0.0:$PORT, default 8000)
 """
 
 from __future__ import annotations
@@ -35,10 +39,17 @@ LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "secret")
 
 app = FastAPI(title="Voice Agent Backend")
 
-# Allow the local React dev server to call us.
+# CORS: comma-separated allowed origins. In production set CORS_ALLOW_ORIGINS on
+# the host to your deployed frontend (e.g. "https://your-app.vercel.app"); it
+# defaults to the local Vite dev origins. Use "*" to allow any origin.
+_DEFAULT_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
+CORS_ALLOW_ORIGINS = [
+    o.strip() for o in os.getenv("CORS_ALLOW_ORIGINS", _DEFAULT_ORIGINS).split(",") if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=CORS_ALLOW_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -68,7 +79,7 @@ def create_token(req: TokenRequest) -> TokenResponse:
     """Mint a short-lived LiveKit join token for a browser participant."""
     if LIVEKIT_API_KEY == "devkey":
         # Non-fatal warning: fine for local `livekit-server --dev`, not prod.
-        print("⚠️  Using default dev LiveKit credentials.")
+        print("[!] Using default dev LiveKit credentials.")
     grant = api.VideoGrants(room_join=True, room=req.room)
     token = (
         api.AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
@@ -88,3 +99,11 @@ def ask(req: AskRequest) -> dict:
 
     result = agent.invoke({"transcript": req.question})
     return {"answer": result.get("response_text", "")}
+
+
+if __name__ == "__main__":
+    # Production entrypoint: bind all interfaces on the host-provided $PORT
+    # (Render/most PaaS set $PORT). Defaults to 8000 for local use.
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))
