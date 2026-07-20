@@ -1,6 +1,6 @@
 # 🎙️ Voice Agent — NVIDIA NIM · LangGraph · WebRTC
 
-### 🔗 [Live Demo](https://voice-ai-assistant-sqb8.vercel.app) — click **Talk to my AI** and allow your microphone
+### 🔗 [Live Demo](https://voice-ai-assistant-nu.vercel.app) — click **Talk to my AI** and allow your microphone
 
 > ⏱️ **Live voice demo available on request.** The site is always up, but voice
 > replies run through an agent worker I host on-demand — [reach out](https://github.com/mithun2244)
