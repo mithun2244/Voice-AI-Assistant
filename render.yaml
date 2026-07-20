@@ -4,9 +4,13 @@
 # Every env var marked `sync: false` is NOT stored here — Render prompts you to
 # paste it in the dashboard (see DEPLOYMENT.md for the exact values).
 #
-# Two services:
-#   voice-agent-api    — public FastAPI server (mints LiveKit tokens)
-#   voice-agent-worker — the LiveKit agent worker (STT → LangGraph → TTS)
+# One service:
+#   voice-agent-api — public FastAPI server (mints LiveKit tokens)
+#
+# NOTE: the LiveKit agent worker (STT → LangGraph → TTS) is intentionally NOT
+# here — Render Background Workers require a paid plan. Run the worker elsewhere
+# (locally, or a paid worker) for the voice path to actually respond. Without a
+# worker running, the frontend can join a room but no agent will answer.
 
 services:
   # ── FastAPI token/API server (public HTTP) ──────────────────────────
@@ -31,37 +35,4 @@ services:
         sync: false
       # Your deployed frontend origin, e.g. https://your-app.vercel.app
       - key: CORS_ALLOW_ORIGINS
-        sync: false
-      # Only used by the /ask text fallback endpoint.
-      - key: NVIDIA_API_KEY
-        sync: false
-
-  # ── LiveKit agent worker (no inbound HTTP; connects out to LiveKit) ──
-  - type: worker
-    name: voice-agent-worker
-    runtime: python
-    # NOTE: Render Background Workers are not on the free tier.
-    plan: starter
-    branch: main
-    # Seed ChromaDB from backend/knowledge at build time (needs NVIDIA_API_KEY).
-    # Non-fatal: a transient NVIDIA blip won't fail the deploy — the agent just
-    # starts with an empty knowledge base until the next successful build.
-    buildCommand: pip install -r requirements.txt && cd backend && (python rag.py || echo "WARN seeding skipped")
-    startCommand: cd backend && python agent_worker.py start
-    envVars:
-      - key: PYTHON_VERSION
-        value: "3.12.10"
-      - key: NVIDIA_API_KEY
-        sync: false
-      - key: LIVEKIT_URL
-        sync: false
-      - key: LIVEKIT_API_KEY
-        sync: false
-      - key: LIVEKIT_API_SECRET
-        sync: false
-      # Discord webhook for the human-in-the-loop hand-off.
-      - key: DISCORD_WEBHOOK_URL
-        sync: false
-      # Link the agent shares with the author — your deployed frontend URL.
-      - key: APP_URL
         sync: false
