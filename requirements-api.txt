@@ -1,0 +1,14 @@
+# Slim dependency set for the FastAPI token server (voice-agent-api web service).
+# It only needs to serve /health and mint LiveKit tokens, so it deliberately
+# excludes the heavy ML/worker stack (chromadb, onnxruntime, livekit-agents,
+# langchain, …) that was OOMing the free-tier build. The worker still uses the
+# full requirements.txt.
+#
+# NOTE: with this slim set the /ask text-fallback endpoint is unavailable
+# (it lazily imports the LangGraph agent). The voice path is unaffected — the
+# frontend only calls /token, and reasoning runs in the worker.
+
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+livekit-api>=0.8.0                      # from livekit import api  (token minting)
+python-dotenv>=1.0.0                    # server.py loads .env / host env vars

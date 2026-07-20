@@ -15,7 +15,8 @@ services:
     runtime: python
     plan: free
     branch: main
-    buildCommand: pip install -r requirements.txt
+    # Slim install — token minting only, no ML stack (avoids free-tier OOM).
+    buildCommand: pip install -r requirements-api.txt
     startCommand: cd backend && uvicorn server:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
