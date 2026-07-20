@@ -71,7 +71,16 @@ class AskRequest(BaseModel):
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok"}
+    # Reports whether the LiveKit vars were actually picked up by this process
+    # (booleans only — never the values). If any is False in production, the
+    # env var isn't set on THIS service, or the service hasn't restarted since.
+    return {
+        "status": "ok",
+        "livekit_url_configured": LIVEKIT_URL != "ws://localhost:7880",
+        "livekit_key_configured": LIVEKIT_API_KEY != "devkey",
+        "livekit_secret_configured": LIVEKIT_API_SECRET != "secret",
+        "cors_allow_origins": CORS_ALLOW_ORIGINS,
+    }
 
 
 @app.post("/token", response_model=TokenResponse)
